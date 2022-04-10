@@ -298,21 +298,12 @@ impl Ecobee {
     pub fn refresh_key(&mut self) {
         let current_refresh = &self.refresh;
         let api_key = &self.api_key;
-        // let url = "http://127.0.0.1:9996/token";
         let url = "https://api.ecobee.com/token";
         let data = format!("grant_type=refresh_token&code={current_refresh}&client_id={api_key}");
         dbg!(&data);
         let request = ureq::post(&url)
             .set("Content-Type", "application/x-www-form-urlencoded")
             .send_string(&data);
-        // dbg!(request
-        //     .err()
-        //     .unwrap()
-        //     .into_response()
-        //     .unwrap()
-        //     .into_string()
-        //     .unwrap());
-        // panic!()
         let request = request.expect("Failed to request a refresh token!");
         let response = request
             .into_string()

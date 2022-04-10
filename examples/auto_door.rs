@@ -8,9 +8,10 @@ use std::thread::sleep;
 use std::time::Duration;
 
 fn main() {
-    let bee = Ecobee {
+    let mut bee = Ecobee {
+        api_key: std::env::var("ECOBEE_KEY").expect("ECOBEE_KEY must be est to run tests"),
         auth: std::env::var("ECOBEE_AUTH").expect("ECOBEE_AUTH must be set to run tests"),
-        refresh: std::env::var("ECOBEE_REFRESH").unwrap_or_default(),
+        refresh: std::env::var("ECOBEE_REFRESH").expect("ECOBEE_REFRESH must be est to run tests"),
     };
     let mut runtime_revision = String::new();
     loop {
