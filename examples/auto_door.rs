@@ -20,6 +20,8 @@ fn main() {
             selectionMatch: "".to_string(),
             include: Some(SelectionInclude::includeDevice),
         });
+        std::env::set_var("ECOBEE_AUTH", &bee.auth);
+        std::env::set_var("ECOBEE_REFRESH", &bee.refresh);
         let new_revision = &summary.revisionList[0].runtime_revision;
         if runtime_revision != *new_revision {
             runtime_revision = new_revision.clone();
@@ -43,26 +45,6 @@ fn main() {
             };
             let runtime_report = bee.get_runtime_report(request);
             dbg!(&runtime_report);
-            let catio_id = runtime_report.sensorList[0]
-                .sensors
-                .as_ref()
-                .expect("No sensors found!")
-                .iter()
-                .filter(|sensor| sensor.sensorName.is_some())
-                .find(|sensor| sensor.sensorName.as_ref().unwrap() == "Catio Door")
-                .expect("Failed to find Catio Door sensor!")
-                .sensorId
-                .as_ref()
-                .expect("Somehow the Catio Door did not have a sensor Id!");
-            let catio_index = runtime_report.sensorList[0]
-                .columns
-                .as_ref()
-                .expect("No sensor columns found!")
-                .iter()
-                .enumerate()
-                .find(|(_i, id)| id == &catio_id)
-                .expect("Failed")
-                .0;
             let date_index = runtime_report.sensorList[0]
                 .columns
                 .as_ref()
@@ -81,65 +63,96 @@ fn main() {
                 .find(|(_i, id)| id == &"time")
                 .expect("Failed")
                 .0;
-            let mut valid_data = runtime_report.sensorList[0]
+            let mut sorted_data = runtime_report.sensorList[0]
                 .data
                 .as_ref()
                 .expect("Failed to find sensor data in the runtime report!")
-                .iter()
-                .map(|data| {
-                    (
-                        data.split(',')
-                            .skip(date_index)
-                            .next()
-                            .expect("A data entry had too few entries!"),
-                        data.split(',')
-                            .skip(time_index) // This is in UTC
-                            .next()
-                            .expect("A data entry had too few entries!"),
-                        data.split(',')
-                            .skip(catio_index)
-                            .next()
-                            .expect("A data entry had too few entries!"),
-                    )
-                })
-                .filter(|(_date_entry, _time_entry, catio_entry)| !catio_entry.is_empty())
-                .collect::<Vec<_>>();
-            valid_data.sort_by(
-                |(date_entry_a, time_entry_a, _), (date_entry_b, time_entry_b, _)| {
-                    let d = date_entry_b.cmp(date_entry_a);
-                    if d == Ordering::Equal {
-                        time_entry_b.cmp(time_entry_a)
-                    } else {
-                        d
-                    }
-                },
-            );
-            dbg!(&valid_data);
-            if let Some((_, _, sensor_status)) = valid_data.iter().next() {
-                let mode = if sensor_status == &"1" {
-                    println!("Door is now closed.");
-                    "auto".to_string()
+                .clone();
+            sorted_data.sort_by(|line_a, line_b| {
+                let date_entry_a = line_a
+                    .split(',')
+                    .skip(date_index)
+                    .next()
+                    .expect("A data entry had too few entries!");
+                let date_entry_b = line_b
+                    .split(',')
+                    .skip(date_index)
+                    .next()
+                    .expect("A data entry had too few entries!");
+                let time_entry_a = line_a
+                    .split(',')
+                    .skip(time_index)
+                    .next()
+                    .expect("A data entry had too few entries!");
+                let time_entry_b = line_b
+                    .split(',')
+                    .skip(time_index)
+                    .next()
+                    .expect("A data entry had too few entries!");
+                let d = date_entry_b.cmp(date_entry_a);
+                if d == Ordering::Equal {
+                    time_entry_b.cmp(time_entry_a)
                 } else {
-                    println!("Door is now open!");
-                    "off".to_string()
-                };
-                bee.update_thermostat(UpdateThermostat {
-                    selection: Selection {
-                        selectionType: SelectionType::registered,
-                        selectionMatch: "".to_string(),
-                        include: None,
-                    },
-                    thermostat: Some(Thermostat {
-                        identifier: thermostat_id,
-                        settings: Some(Settings {
-                            hvacMode: Some(mode),
-                        }),
-                    }),
-                    // functions: None,
+                    d
+                }
+            });
+            let something_open = runtime_report.sensorList[0]
+                .sensors
+                .as_ref()
+                .expect("No sensors found!")
+                .iter()
+                .filter(|sensor| sensor.sensorType.is_some())
+                .filter(|sensor| sensor.sensorType.as_ref().unwrap() == "dryContact")
+                .map(|sensor| sensor.sensorId.as_ref().expect("A dryContact did not have an ID!"))
+                .any(|dry_sensor_id| {
+                    let index = runtime_report.sensorList[0]
+                        .columns
+                        .as_ref()
+                        .expect("No sensor columns found!")
+                        .iter()
+                        .enumerate()
+                        .find(|(_i, id)| id == &dry_sensor_id)
+                        .expect(
+                            "A dryContact had an ID, but the idea was not a column in available sensor data!",
+                        )
+                        .0;
+                    let entry = sorted_data
+                        .iter()
+                        .map(|line| {
+                            line.split(',')
+                                .skip(index)
+                                .next()
+                                .expect("A data entry had too few entries!")
+                        })
+                        .filter(|entry| !entry.is_empty())
+                        .next();
+                    if let Some(entry) = entry {
+                        if entry == "0" {
+                            println!("{dry_sensor_id} is open!");
+                            return true;
+                        } else {
+                            println!("{dry_sensor_id} is closed!");
+                        }
+                    } else {
+                        println!("{dry_sensor_id} is has no data.  Assuming it's closed!");
+                    }
+                    return false;
                 });
-            } else {
-                eprintln!("No sensor data!");
-            }
+            let mode = if something_open { "off" } else { "auto" };
+            bee.update_thermostat(UpdateThermostat {
+                selection: Selection {
+                    selectionType: SelectionType::registered,
+                    selectionMatch: "".to_string(),
+                    include: None,
+                },
+                thermostat: Some(Thermostat {
+                    identifier: thermostat_id,
+                    settings: Some(Settings {
+                        hvacMode: Some(mode.to_string()),
+                    }),
+                }),
+                // functions: None,
+            });
         }
         sleep(Duration::from_secs(15 * 60));
     }
