@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize, Serializer};
 use std::str::FromStr;
+use ureq::Error;
 
 #[derive(Debug, Serialize)]
 pub enum SelectionType {
@@ -274,33 +275,93 @@ impl Into<UpdateThermostatJson> for UpdateThermostat {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateThermostatResponse {
+pub struct StatusOnlyResponse {
     pub status: Status,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RefreshTokenResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub refresh_token: String,
+    pub expires_in: i32,
+    pub scope: String,
+}
+
 pub struct Ecobee {
+    pub api_key: String,
     pub auth: String,
     pub refresh: String,
 }
 
 impl Ecobee {
-    pub fn get_thermostat_summary(&self, selection: Selection) -> GetThermostatSummaryResponse {
+    pub fn refresh_key(&mut self) {
+        let current_refresh = &self.refresh;
+        let api_key = &self.api_key;
+        // let url = "http://127.0.0.1:9996/token";
+        let url = "https://api.ecobee.com/token";
+        let data = format!("grant_type=refresh_token&code={current_refresh}&client_id={api_key}");
+        dbg!(&data);
+        let request = ureq::post(&url)
+            .set("Content-Type", "application/x-www-form-urlencoded")
+            .send_string(&data);
+        // dbg!(request
+        //     .err()
+        //     .unwrap()
+        //     .into_response()
+        //     .unwrap()
+        //     .into_string()
+        //     .unwrap());
+        // panic!()
+        let request = request.expect("Failed to request a refresh token!");
+        let response = request
+            .into_string()
+            .expect("Failed to get body from update_thermostat request");
+        let response: RefreshTokenResponse = serde_json::from_str(&response)
+            .expect("Failed to parse a token refresh request body into a RefreshTokenResponse");
+        self.auth = response.access_token;
+        self.refresh = response.refresh_token;
+    }
+    pub fn get_thermostat_summary(&mut self, selection: Selection) -> GetThermostatSummaryResponse {
         let auth = &self.auth;
-        let selection = selection.to_json();
-        let url = format!("https://api.ecobee.com/1/thermostatSummary?format=json&body={{\"selection\":{selection}}}");
+        let selection_json = selection.to_json();
+        let url = format!("https://api.ecobee.com/1/thermostatSummary?format=json&body={{\"selection\":{selection_json}}}");
         dbg!(&url);
         let request = ureq::get(&url)
             .set("Content-Type", "text/json")
             .set("Authorization", &format!("Bearer {auth}"))
-            .call()
-            .expect("Failed to build get_thermostat_summary request!");
-        let j: GetThermostatSummaryResponseJson = serde_json::from_str(
-            &request
-                .into_string()
-                .expect("Failed to get body from get_thermostat_summary request"),
-        )
-        .expect("Failed to deserialize body from get_thermostat_summary request");
-        j.into()
+            .call();
+        match request {
+            Ok(request) => {
+                let j: GetThermostatSummaryResponseJson = serde_json::from_str(
+                    &request
+                        .into_string()
+                        .expect("Failed to get body from get_thermostat_summary request"),
+                )
+                .expect("Failed to deserialize body from get_thermostat_summary request");
+                return j.into();
+            }
+            // TODO: Have the caller refresh the token if needed.
+            // Return a result with a possible error enum of RefreshNeeded or something
+            Err(e) => match e {
+                Error::Status(_code, response) => {
+                    let response = response
+                        .into_string()
+                        .expect("Could not read response from a non-okay server response.");
+                    let status: StatusOnlyResponse = serde_json::from_str(&response)
+                        .expect("non-okay server response was not a StatusOnlyResponse!");
+                    if status.status.code == 14 {
+                        self.refresh_key();
+                        return self.get_thermostat_summary(selection);
+                    } else {
+                        panic!("Unrecoverable response from server: {}", response);
+                    }
+                }
+                Error::Transport(e) => {
+                    panic!("{}", e);
+                }
+            },
+        }
     }
     pub fn get_runtime_report(&self, data: GetRuntimeReport) -> GetRuntimeReportResponse {
         let auth = &self.auth;
@@ -326,7 +387,7 @@ impl Ecobee {
         )
         .expect("Failed to deserialize body from get_runtime_report request")
     }
-    pub fn update_thermostat(&self, data: UpdateThermostat) -> UpdateThermostatResponse {
+    pub fn update_thermostat(&self, data: UpdateThermostat) -> StatusOnlyResponse {
         let auth = &self.auth;
         let data: UpdateThermostatJson = data.into();
         let data = serde_json::to_string(&data)
@@ -356,9 +417,11 @@ mod tests {
 
     #[test]
     fn thermostat_summary() {
-        let bee = Ecobee {
+        let mut bee = Ecobee {
+            api_key: std::env::var("ECOBEE_KEY").expect("ECOBEE_KEY must be est to run tests"),
             auth: std::env::var("ECOBEE_AUTH").expect("ECOBEE_AUTH must be set to run tests"),
-            refresh: "".to_string(),
+            refresh: std::env::var("ECOBEE_REFRESH")
+                .expect("ECOBEE_REFRESH must be est to run tests"),
         };
         let ret = bee.get_thermostat_summary(Selection {
             selectionType: SelectionType::registered,
