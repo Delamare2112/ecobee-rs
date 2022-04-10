@@ -1,5 +1,6 @@
 use chrono::Datelike;
 use ecobee::{Ecobee, GetRuntimeReport, Selection, SelectionInclude, SelectionType};
+use std::cmp::Ordering;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -20,7 +21,8 @@ fn main() {
             runtime_revision = new_revision.clone();
 
             let today = chrono::Local::today();
-            let today = format!("{}-{}-{}", today.year(), today.month(), today.day());
+            let today = format!("{}-{:0>2}-{:0>2}", today.year(), today.month(), today.day());
+            // dbg!(&today);
 
             let thermostat_id = summary.revisionList[0].thermostat_identifier.clone();
             let request = GetRuntimeReport {
@@ -31,11 +33,92 @@ fn main() {
                 },
                 includeSensors: true,
                 startDate: today.clone(),
-                endDate: today,
+                endDate: today.clone(),
                 columns: "zoneHvacMode,zoneCalendarEvent".to_string(),
                 ..Default::default()
             };
-            dbg!(bee.get_runtime_report(request));
+            let runtime_report = bee.get_runtime_report(request);
+            // dbg!(&runtime_report);
+            let catio_id = runtime_report.sensorList[0]
+                .sensors
+                .as_ref()
+                .expect("No sensors found!")
+                .iter()
+                .filter(|sensor| sensor.sensorName.is_some())
+                .find(|sensor| sensor.sensorName.as_ref().unwrap() == "Catio Door")
+                .expect("Failed to find Catio Door sensor!")
+                .sensorId
+                .as_ref()
+                .expect("Somehow the Catio Door did not have a sensor Id!");
+            let catio_index = runtime_report.sensorList[0]
+                .columns
+                .as_ref()
+                .expect("No sensor columns found!")
+                .iter()
+                .enumerate()
+                .find(|(_i, id)| id == &catio_id)
+                .expect("Failed")
+                .0;
+            let date_index = runtime_report.sensorList[0]
+                .columns
+                .as_ref()
+                .expect("No sensor columns found!")
+                .iter()
+                .enumerate()
+                .find(|(_i, id)| id == &"date")
+                .expect("Failed")
+                .0;
+            let time_index = runtime_report.sensorList[0]
+                .columns
+                .as_ref()
+                .expect("No sensor columns found!")
+                .iter()
+                .enumerate()
+                .find(|(_i, id)| id == &"time")
+                .expect("Failed")
+                .0;
+            let mut valid_data = runtime_report.sensorList[0]
+                .data
+                .as_ref()
+                .expect("Failed to find sensor data in the runtime report!")
+                .iter()
+                .map(|data| {
+                    (
+                        data.split(',')
+                            .skip(date_index)
+                            .next()
+                            .expect("A data entry had too few entries!"),
+                        data.split(',')
+                            .skip(time_index) // This is in UTC
+                            .next()
+                            .expect("A data entry had too few entries!"),
+                        data.split(',')
+                            .skip(catio_index)
+                            .next()
+                            .expect("A data entry had too few entries!"),
+                    )
+                })
+                .filter(|(_date_entry, _time_entry, catio_entry)| !catio_entry.is_empty())
+                .collect::<Vec<_>>();
+            valid_data.sort_by(
+                |(date_entry_a, time_entry_a, _), (date_entry_b, time_entry_b, _)| {
+                    let d = date_entry_b.cmp(date_entry_a);
+                    if d == Ordering::Equal {
+                        time_entry_b.cmp(time_entry_a)
+                    } else {
+                        d
+                    }
+                },
+            );
+            if let Some((_, _, sensor_status)) = valid_data.iter().next() {
+                if sensor_status == &"1" {
+                    println!("Door is now closed.");
+                } else {
+                    println!("Door is now open!");
+                }
+            } else {
+                eprintln!("No sensor data!");
+            }
         }
         sleep(Duration::from_secs(15 * 60));
     }
