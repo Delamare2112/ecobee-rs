@@ -128,13 +128,13 @@ fn main() {
                         .next();
                     if let Some(entry) = entry {
                         if entry == "0" {
-                            println!("{dry_sensor_id} is open!");
+                            println!("{dry_sensor_id} most recently reported that it's open!");
                             return true;
                         } else {
-                            println!("{dry_sensor_id} is closed!");
+                            println!("{dry_sensor_id} most recently reported that it's closed!");
                         }
                     } else {
-                        println!("{dry_sensor_id} is has no data.  Assuming it's closed!");
+                        println!("{dry_sensor_id} has no recent data.  Assuming it's closed!");
                     }
                     return false;
                 });
