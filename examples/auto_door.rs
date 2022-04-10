@@ -1,5 +1,8 @@
 use chrono::Datelike;
-use ecobee::{Ecobee, GetRuntimeReport, Selection, SelectionInclude, SelectionType};
+use ecobee::{
+    Ecobee, GetRuntimeReport, Selection, SelectionInclude, SelectionType, Settings, Thermostat,
+    UpdateThermostat,
+};
 use std::cmp::Ordering;
 use std::thread::sleep;
 use std::time::Duration;
@@ -20,7 +23,7 @@ fn main() {
         if runtime_revision != *new_revision {
             runtime_revision = new_revision.clone();
 
-            let today = chrono::Local::today();
+            let today = chrono::Utc::today();
             let today = format!("{}-{:0>2}-{:0>2}", today.year(), today.month(), today.day());
             // dbg!(&today);
 
@@ -28,7 +31,7 @@ fn main() {
             let request = GetRuntimeReport {
                 selection: Selection {
                     selectionType: SelectionType::thermostats,
-                    selectionMatch: thermostat_id,
+                    selectionMatch: thermostat_id.clone(),
                     include: Some(SelectionInclude::includeDevice),
                 },
                 includeSensors: true,
@@ -38,7 +41,7 @@ fn main() {
                 ..Default::default() // TODO: I don't have to grab all data from the start of the UTC day
             };
             let runtime_report = bee.get_runtime_report(request);
-            // dbg!(&runtime_report);
+            dbg!(&runtime_report);
             let catio_id = runtime_report.sensorList[0]
                 .sensors
                 .as_ref()
@@ -110,12 +113,29 @@ fn main() {
                     }
                 },
             );
+            dbg!(&valid_data);
             if let Some((_, _, sensor_status)) = valid_data.iter().next() {
-                if sensor_status == &"1" {
+                let mode = if sensor_status == &"1" {
                     println!("Door is now closed.");
+                    "auto".to_string()
                 } else {
                     println!("Door is now open!");
-                }
+                    "off".to_string()
+                };
+                bee.update_thermostat(UpdateThermostat {
+                    selection: Selection {
+                        selectionType: SelectionType::registered,
+                        selectionMatch: "".to_string(),
+                        include: None,
+                    },
+                    thermostat: Some(Thermostat {
+                        identifier: thermostat_id,
+                        settings: Some(Settings {
+                            hvacMode: Some(mode),
+                        }),
+                    }),
+                    // functions: None,
+                });
             } else {
                 eprintln!("No sensor data!");
             }

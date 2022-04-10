@@ -2,7 +2,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use std::str::FromStr;
 
 #[derive(Debug, Serialize)]
@@ -223,6 +223,61 @@ pub struct GetRuntimeReportResponse {
     pub sensorList: Vec<RuntimeSensorReport>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct Settings {
+    pub hvacMode: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Thermostat {
+    /// TODO: the spec says this is required but I suspect it might not be.
+    pub identifier: String,
+    pub settings: Option<Settings>,
+}
+
+#[derive(Debug)]
+pub struct Function {}
+impl Serialize for Function {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        todo!("Thermostat functions are not yet implemented.")
+    }
+}
+
+#[derive(Debug)]
+pub struct UpdateThermostat {
+    pub selection: Selection,
+    pub thermostat: Option<Thermostat>,
+    // pub functions: Option<Vec<Function>>,
+}
+
+// TODO: These Options for serialization just place '"functions":null' instead of excluding.
+// There is no way to make serde_json not output null that I can find.
+
+#[derive(Debug, Serialize)]
+pub struct UpdateThermostatJson {
+    pub selection: String,
+    pub thermostat: Option<Thermostat>,
+    // pub functions: Option<Vec<Function>>,
+}
+
+impl Into<UpdateThermostatJson> for UpdateThermostat {
+    fn into(self) -> UpdateThermostatJson {
+        UpdateThermostatJson {
+            selection: self.selection.to_json(),
+            thermostat: self.thermostat,
+            // functions: self.functions,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateThermostatResponse {
+    pub status: Status,
+}
+
 pub struct Ecobee {
     pub auth: String,
     pub refresh: String,
@@ -251,10 +306,11 @@ impl Ecobee {
         let auth = &self.auth;
         let data: GetRuntimeReportJson = data.into();
         let data = serde_json::to_string(&data)
-            .expect("Failed to serialize GetRuntimeReport object!")
+            .expect("Failed to serialize UpdateThermostat object!")
             .replace("\\\"", "\"")
-            .replace(r#""selection":"{""#, r#""selection":{""#)
-            .replace(r#"":true}""#, r#"":true}"#);
+            .replace(r#""selection":"{""#, r#""selection":{""#) // Fix the fact that selection has been serialized into a string.
+            .replace(r#"":true}""#, r#"":true}"#) // Fix the fact that selection has been serialized into a string.
+            .replace(r#""}""#, r#""}"#); // TODO: I NEED a better solution to this.
 
         let request = ureq::get(&format!(
             "https://api.ecobee.com/1/runtimeReport?format=json&body={data}"
@@ -269,6 +325,28 @@ impl Ecobee {
                 .expect("Failed to get body from get_runtime_report request"),
         )
         .expect("Failed to deserialize body from get_runtime_report request")
+    }
+    pub fn update_thermostat(&self, data: UpdateThermostat) -> UpdateThermostatResponse {
+        let auth = &self.auth;
+        let data: UpdateThermostatJson = data.into();
+        let data = serde_json::to_string(&data)
+            .expect("Failed to serialize UpdateThermostat object!")
+            .replace("\\\"", "\"")
+            .replace(r#""selection":"{""#, r#""selection":{""#) // Fix the fact that selection has been serialized into a string.
+            .replace(r#"":true}""#, r#"":true}"#) // Fix the fact that selection has been serialized into a string.
+            .replace(r#""}""#, r#""}"#); // TODO: I NEED a better solution to this.
+        dbg!(&data);
+        let request = ureq::post("https://api.ecobee.com/1/thermostat?format=json")
+            .set("content-type", "application/json")
+            .set("Authorization", &format!("Bearer {auth}"))
+            .send_string(&urlencoding::encode(&data).into_owned())
+            .expect("Failed to build update_thermostat request!");
+        let response = request
+            .into_string()
+            .expect("Failed to get body from update_thermostat request");
+        dbg!(&response);
+        serde_json::from_str(&response)
+            .expect("Failed to deserialize body from update_thermostat request")
     }
 }
 
