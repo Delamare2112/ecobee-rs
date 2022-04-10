@@ -5,6 +5,7 @@ authors = ["Trevor Berninger <trevor@lightfieldlab.com>"]
 edition = "2018"
 
 [dependencies]
+chrono = "0.4.19"
 ureq = "2.4.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
