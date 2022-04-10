@@ -14,7 +14,7 @@ fn main() {
         let summary = bee.get_thermostat_summary(Selection {
             selectionType: SelectionType::registered,
             selectionMatch: "".to_string(),
-            include: SelectionInclude::includeDevice,
+            include: Some(SelectionInclude::includeDevice),
         });
         let new_revision = &summary.revisionList[0].runtime_revision;
         if runtime_revision != *new_revision {
@@ -29,13 +29,13 @@ fn main() {
                 selection: Selection {
                     selectionType: SelectionType::thermostats,
                     selectionMatch: thermostat_id,
-                    include: SelectionInclude::includeDevice,
+                    include: Some(SelectionInclude::includeDevice),
                 },
                 includeSensors: true,
                 startDate: today.clone(),
                 endDate: today.clone(),
                 columns: "zoneHvacMode,zoneCalendarEvent".to_string(),
-                ..Default::default()
+                ..Default::default() // TODO: I don't have to grab all data from the start of the UTC day
             };
             let runtime_report = bee.get_runtime_report(request);
             // dbg!(&runtime_report);

@@ -45,17 +45,23 @@ pub enum SelectionInclude {
 pub struct Selection {
     pub selectionType: SelectionType,
     pub selectionMatch: String,
-    pub include: SelectionInclude,
+    pub include: Option<SelectionInclude>,
 }
 
 impl Selection {
     fn to_json(&self) -> String {
         let selection_type = format!("{:?}", self.selectionType);
         let selection_match = &self.selectionMatch;
-        let selection_include = format!("{:?}", self.include);
-        format!(
-            "{{\"selectionType\":\"{selection_type}\",\"selectionMatch\":\"{selection_match}\",\"{selection_include}\":true}}"
-        )
+        if let Some(include) = self.include.as_ref() {
+            let selection_include = format!("{:?}", include);
+            format!(
+                "{{\"selectionType\":\"{selection_type}\",\"selectionMatch\":\"{selection_match}\",\"{selection_include}\":true}}"
+            )
+        } else {
+            format!(
+                "{{\"selectionType\":\"{selection_type}\",\"selectionMatch\":\"{selection_match}\"}}"
+            )
+        }
     }
 }
 
@@ -171,7 +177,7 @@ impl Default for GetRuntimeReport {
             selection: Selection {
                 selectionType: SelectionType::thermostats,
                 selectionMatch: "".to_string(),
-                include: SelectionInclude::includeRuntime,
+                include: None,
             },
             startDate: "".to_string(),
             startInterval: 0,
@@ -225,13 +231,10 @@ pub struct Ecobee {
 impl Ecobee {
     pub fn get_thermostat_summary(&self, selection: Selection) -> GetThermostatSummaryResponse {
         let auth = &self.auth;
-        let selection_type = format!("{:?}", selection.selectionType);
-        let selection_match = selection.selectionMatch;
-        let selection_include = format!("{:?}", selection.include);
-        let selection = format!(
-            "{{\"selectionType\":\"{selection_type}\",\"selectionMatch\":\"{selection_match}\",\"{selection_include}\":true}}"
-        );
-        let request = ureq::get(&format!("https://api.ecobee.com/1/thermostatSummary?format=json&body={{\"selection\":{selection}}}"))
+        let selection = selection.to_json();
+        let url = format!("https://api.ecobee.com/1/thermostatSummary?format=json&body={{\"selection\":{selection}}}");
+        dbg!(&url);
+        let request = ureq::get(&url)
             .set("Content-Type", "text/json")
             .set("Authorization", &format!("Bearer {auth}"))
             .call()
@@ -282,7 +285,7 @@ mod tests {
         let ret = bee.get_thermostat_summary(Selection {
             selectionType: SelectionType::registered,
             selectionMatch: "".to_string(),
-            include: SelectionInclude::includeDevice,
+            include: Some(SelectionInclude::includeDevice),
         });
         dbg!(ret);
     }
